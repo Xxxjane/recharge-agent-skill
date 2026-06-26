@@ -1,6 +1,6 @@
 # 虚拟商品代充值 AI Agent Skill
 
-> 通用型 Agent Skill：OpenAPI + MCP + Prompt + 渠道 Adapter，严格遵循 Jiigo × 彩贝壳虚拟代充 PRD。
+> 通用型 Agent Skill：OpenAPI + MCP + Prompt + 渠道 Adapter
 
 让任意 AI Agent（Cursor、Dify、Coze、自研 Bot）安全引导用户完成：**品牌选择 → 级联规格 → 账号校验 → 红灯泡确认 → 支付 → 履约监控**；并支持卖家侧接单履约。
 
@@ -124,10 +124,6 @@ recharge-agent-skill/
 ---
 
 ## 业务背景
-
-详见 [docs/PRD_Reference.md](docs/PRD_Reference.md)
-
-> 本仓库为基于 Jiigo × 彩贝壳虚拟代充 PRD 的**开源参考实现**，非官方产品仓库。
 
 ---
 
