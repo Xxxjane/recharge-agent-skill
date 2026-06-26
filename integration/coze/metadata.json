@@ -125,7 +125,8 @@
         "properties": {
           "orderId": { "type": "string", "description": "订单 ID，后续查询状态使用此 ID" },
           "payUrl": { "type": "string", "description": "支付收银台跳转链接" },
-          "timeoutSeconds": { "type": "integer", "description": "支付超时时间（秒）" }
+          "payTimeoutSeconds": { "type": "integer", "description": "支付超时（秒）" },
+          "fulfillmentTimeoutSeconds": { "type": "integer", "description": "履约超时（秒）" }
         }
       }
     },

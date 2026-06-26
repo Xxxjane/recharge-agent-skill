@@ -148,6 +148,114 @@ paths:
         '500':
           description: 查询订单状态失败。
 
+  /orders/{orderId}/confirm-receipt:
+    post:
+      summary: 买家确认收货
+      description: 订单状态为 DELIVERED 时，买家手动确认收货，流转为 COMPLETED。
+      operationId: confirmReceipt
+      tags:
+        - Orders
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 确认收货成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusResponse'
+
+  /seller/orders/pending:
+    get:
+      summary: 获取待履约订单列表（卖家侧）
+      description: Jiigo 副业助手调用，获取当前待接单/充值中的订单。
+      operationId: listPendingSellerOrders
+      tags:
+        - Seller
+      responses:
+        '200':
+          description: 待履约订单列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  orders:
+                    type: array
+                    items:
+                      type: object
+
+  /seller/orders/{orderId}/accept:
+    post:
+      summary: 卖家接单
+      operationId: sellerAcceptOrder
+      tags:
+        - Seller
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 接单成功 PENDING_MATCH → PENDING_ACCEPT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusResponse'
+
+  /seller/orders/{orderId}/start-recharge:
+    post:
+      summary: 卖家开始充值
+      operationId: sellerStartRecharge
+      tags:
+        - Seller
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: PENDING_ACCEPT → RECHARGING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusResponse'
+
+  /seller/orders/{orderId}/deliver:
+    post:
+      summary: 卖家上传凭证发货
+      operationId: sellerDeliverOrder
+      tags:
+        - Seller
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliverOrderRequest'
+      responses:
+        '200':
+          description: RECHARGING → DELIVERED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusResponse'
+
 components:
   schemas:
     Brand:
@@ -348,13 +456,26 @@ components:
             AI Agent 可在对话中以按钮或链接形式提供给用户，引导完成支付。
             支付成功后订单状态将从 PENDING_PAY 流转。
           example: https://pay.platform.open/cashier?orderId=ORD_9981
-        timeoutSeconds:
+        payTimeoutSeconds:
           type: integer
           description: |
-            支付超时倒计时（秒）。
-            PRD 标准为 1800 秒（30 分钟）。
-            超时未支付的订单将自动关闭。
+            支付超时倒计时（秒）。PRD 标准为 1800 秒（30 分钟）。
+            超时未支付订单自动 CLOSED。
           example: 1800
+        fulfillmentTimeoutSeconds:
+          type: integer
+          description: |
+            支付成功后卖家履约大闸（秒）。PRD 标准为 900 秒（15 分钟）。
+            超时未发货自动 REFUNDED。
+          example: 900
+
+    DeliverOrderRequest:
+      type: object
+      properties:
+        rechargeProofUrl:
+          type: string
+          description: 卖家上传的充值凭证截图 HTTPS 地址
+          example: https://assets.cdn/proofs/proof_9981.jpg
 
     OrderStatusResponse:
       type: object

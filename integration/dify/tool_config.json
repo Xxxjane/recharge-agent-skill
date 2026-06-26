@@ -167,7 +167,8 @@
         "properties": {
           "orderId": { "type": "string", "example": "ORD_20260625_9981" },
           "payUrl": { "type": "string", "example": "https://pay.platform.open/cashier?orderId=ORD_9981" },
-          "timeoutSeconds": { "type": "integer", "example": 1800 }
+          "payTimeoutSeconds": { "type": "integer", "example": 1800 },
+          "fulfillmentTimeoutSeconds": { "type": "integer", "example": 900 }
         }
       },
       "OrderStatusResponse": {

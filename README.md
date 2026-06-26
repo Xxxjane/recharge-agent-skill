@@ -1,199 +1,153 @@
-# 虚拟商品代充值 AI Agent Skill (Plugin)
+# 虚拟商品代充值 AI Agent Skill
 
-> 一个严格遵循业务 PRD 的虚拟商品代充值独立插件（Skill/Tool），专为 AI Agent 框架设计。
+> 通用型 Agent Skill：OpenAPI + MCP + Prompt + 渠道 Adapter，严格遵循 Jiigo × 彩贝壳虚拟代充 PRD。
 
-通过统一的 OpenAPI 契约 + 强约束 System Prompt，让 AI Agent 能够安全、合规地引导用户完成「品牌选择 → 级联规格 → 账号校验 → 红灯泡二次确认 → 下单支付 → 履约监控」全流程。
+让任意 AI Agent（Cursor、Dify、Coze、自研 Bot）安全引导用户完成：**品牌选择 → 级联规格 → 账号校验 → 红灯泡确认 → 支付 → 履约监控**；并支持卖家侧接单履约。
 
----
+[![CI](https://github.com/Xxxjane/recharge-agent-skill/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Xxxjane/recharge-agent-skill/actions)
 
-## ✨ 核心特性
-
-- **严格业务规则落地**
-  - 单次交易强制 `quantity = 1`（防刷 + 防错）
-  - 充值账号必须通过品牌模板 `inputRegex` 校验
-  - 强制 `X-Idempotency-Key` 幂等防重，杜绝重复扣款
-- **15 分钟履约大闸 + 自动退款**
-  - 支付成功后启动异步定时器
-  - 超时未发货自动流转 `REFUNDED` 并记录日志
-  - 支持 `DEBUG_MODE` 将 15 分钟加速为 15 秒（便于本地调试）
-- **完整级联 SKU 模板**
-  - 支持「一级规格（会员类型/币种）→ 二级规格（时长/面额）」动态级联
-  - 实时返回全网最优价 `bestPrice`
-- **红灯泡二次确认机制**
-  - Prompt 强制 Agent 在下单前输出醒目确认框
-  - 必须用户明确“确认”后才能调用创建订单接口
-- **开箱即用的集成配置**
-  - 提供 Dify 自定义工具配置 (`integration/dify/tool_config.json`)
-  - 提供 Coze（扣子）插件元数据 (`integration/coze/metadata.json`)
-- **完整自动化测试**
-  - `test_skill.py` 覆盖异常流、正常流、幂等流、超时退款全场景
+**仓库地址：** https://github.com/Xxxjane/recharge-agent-skill
 
 ---
 
-## 🏗️ 系统架构
+## 特性
+
+- **买家侧 4 工具 + 卖家侧 4 工具**，完整订单状态机
+- **业务硬约束**：`quantity=1`、账号正则、`unitPrice=bestPrice`、幂等键、支付/履约超时分离
+- **三种接入方式**：OpenAPI（Dify/Coze）、MCP Server（Cursor/Claude）、Cursor SKILL.md
+- **渠道 Adapter stub**：微信 / 支付宝 / 美团（可渐进替换 Mock 支付）
+- **9 条自动化测试**，覆盖异常流、完整履约、自动/手动确认收货
+
+---
+
+## 架构
 
 ```
-                    ┌─────────────────────────┐
-                    │  AI Agent 智能充值助手   │
-                    └────────────┬────────────┘
-         ┌───────────────────────┴───────────────────────┐
-         ▼ (调用 API)                                    ▼ (调用 API)
-┌──────────────────┐                            ┌──────────────────┐
-│   买家侧 (交易)  │                            │  卖家侧 (履约)   │
-│ - 品牌与模板获取 │                            │ - 接收派单通知   │
-│ - 账号级联校验   │                            │ - 接单/响应充值  │
-│ - 确认下单与支付 │                            │ - 上传凭证/发货  │
-└──────────────────┘                            └──────────────────┘
+Agent 层          Cursor / Dify / Coze / 微信 Bot
+       ↓                ↓              ↓
+通用 Skill 层     MCP Server    OpenAPI REST    SKILL.md
+       ↓                └──────┬───────┘
+Mock / 真实 API   FastAPI (买家 + 卖家)
+       ↓
+渠道 Adapter      WeChat / Alipay / Meituan (stub)
 ```
-
-- **买家侧**：由彩贝壳 / Jiigo 买家域的 AI 助手驱动，负责交互式引导 + 资金安全。
-- **卖家侧**：由 Jiigo 副业助手驱动，负责 15 分钟内履约提醒与凭证上传。
 
 ---
 
-## 🚀 快速开始
-
-### 1. 克隆项目
+## 快速开始
 
 ```bash
-git clone https://github.com/your-org/recharge-agent-skill.git
+git clone https://github.com/Xxxjane/recharge-agent-skill.git
 cd recharge-agent-skill
-```
+pip install -r requirements.txt
+cp .env.example .env
 
-### 2. 启动 Mock 服务（本地开发 / 调试）
+# 启动 Mock API
+uvicorn src.app:app --host 127.0.0.1 --port 8000
 
-```bash
-cd src
-pip install fastapi uvicorn pydantic
-python app.py
-# 或
-uvicorn app:app --reload --port 8000
-```
-
-服务默认监听 `http://localhost:8000`
-
-### 3. 运行自动化测试
-
-```bash
-pip install requests
+# 另开终端运行测试
 python test_skill.py
 ```
 
-测试脚本会自动执行 5 个核心场景（异常拦截、正常下单、幂等性、15 秒自动退款）。
+Docker:
+
+```bash
+docker build -t recharge-agent-skill .
+docker run -p 8000:8000 -e DEBUG_MODE=true recharge-agent-skill
+```
 
 ---
 
-## 📡 API 接口概览
+## 接入方式
 
-完整契约请查看 `[src/schemas/openapi.yaml](src/schemas/openapi.yaml)`
-
-
-| 方法   | 路径                                   | 说明                   | 关键约束                                         |
-| ---- | ------------------------------------ | -------------------- | -------------------------------------------- |
-| GET  | `/brands`                            | 获取支持的充值品牌列表          | -                                            |
-| GET  | `/brands/{brandId}/template`         | 获取级联 SKU 模板 + 账号校验正则 | 必须先调此接口                                      |
-| POST | `/orders/create`                     | 创建待支付代充订单            | 必须传 `X-Idempotency-Key`，`quantity=1`，账号需通过正则 |
-| GET  | `/orders/{orderId}/status`           | 查询订单实时状态             | 支付后建议 5~10s 轮询                               |
-| POST | `/orders/{orderId}/mock-pay-success` | 【调试】模拟支付成功           | 触发 15 秒（DEBUG）退款计时器                          |
-| POST | `/orders/{orderId}/mock-deliver`     | 【调试】模拟卖家发货           | 状态变为 DELIVERED 并返回凭证图                        |
-
+| 方式 | 文档 |
+|------|------|
+| **OpenAPI / Dify / Coze** | [integration/dify/](integration/dify/) · [integration/coze/](integration/coze/) |
+| **MCP（推荐通用接入）** | [integration/mcp/README.md](integration/mcp/README.md) |
+| **Cursor Agent Skill** | [.cursor/skills/virtual-recharge/SKILL.md](.cursor/skills/virtual-recharge/SKILL.md) |
 
 ---
 
-## 🧪 自动化测试
+## API 概览
 
-项目提供结构化的端到端测试脚本 `test_skill.py`，覆盖：
+### 买家侧
 
-- Case 1：quantity=2 → 400 拦截
-- Case 2：非法账号格式 → 400 拦截
-- Case 3：合规下单成功
-- Case 4：相同幂等键返回相同订单
-- Case 5：DEBUG 模式下 15 秒自动退款（RECHARGING → REFUNDED）
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/brands` | 品牌列表 |
+| GET | `/brands/{brandId}/template` | 级联模板 + bestPrice |
+| POST | `/orders/create` | 创建订单（需 `X-Idempotency-Key`） |
+| GET | `/orders/{orderId}/status` | 轮询状态 |
+| POST | `/orders/{orderId}/confirm-receipt` | 确认收货 |
 
----
+### 卖家侧
 
-## 🔌 Agent 平台集成
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/seller/orders/pending` | 待履约列表 |
+| POST | `/seller/orders/{orderId}/accept` | 接单 |
+| POST | `/seller/orders/{orderId}/start-recharge` | 开始充值 |
+| POST | `/seller/orders/{orderId}/deliver` | 上传凭证发货 |
 
-### Dify
-
-1. 在 Dify 自定义工具中导入 `integration/dify/tool_config.json`
-2. 将 `src/prompt/system_prompt.md` 内容作为 System Instruction 注入
-3. 在对话中测试“帮我充腾讯视频白金会员 3 个月”
-
-### Coze（扣子）
-
-1. 在 Coze 插件市场或自定义插件中导入 `integration/coze/metadata.json`
-2. 启用图片卡片能力，订单状态变为 `DELIVERED` 时可直接渲染 `rechargeProofUrl`
-3. 建议在工作流中配置轮询节点 + 图片卡片展示节点
+完整契约：[src/schemas/openapi.yaml](src/schemas/openapi.yaml)
 
 ---
 
-## ☁️ 部署指南
-
-详细部署步骤请参考：
-
-- [docs/Deployment_Guide.md](docs/Deployment_Guide.md)
-
-支持一键部署到：
-
-- Vercel
-- Render
-- Zeabur
-- Railway / Docker 等
-
----
-
-## 📖 业务背景
-
-本项目完整还原了 **Jiigo × 彩贝壳** 虚拟商品代充业务的核心商业闭环。
-
-详细产品规则、双边角色、15 分钟履约机制、自动收货逻辑请阅读：
-
-- [docs/PRD_Reference.md](docs/PRD_Reference.md)
-
----
-
-## 📁 项目结构
+## 项目结构
 
 ```
 recharge-agent-skill/
-├── .github/workflows/          # CI/CD 配置（待完善）
+├── .cursor/skills/virtual-recharge/SKILL.md
+├── .github/workflows/ci-cd.yml
+├── adapters/              # 微信/支付宝/美团 stub
 ├── docs/
-│   ├── Deployment_Guide.md     # 部署指南
-│   └── PRD_Reference.md        # 产品 PRD 参考
+│   ├── PRD_Reference.md
+│   ├── Deployment_Guide.md
+│   ├── Development_Guide.md
+│   └── Agent_Skill_Spec.md
+├── examples/
+├── integration/           # Dify / Coze / MCP
+├── recharge_mcp/          # MCP Server
 ├── src/
-│   ├── app.py                  # FastAPI Mock 服务（核心）
+│   ├── app.py
+│   ├── config.py
 │   ├── prompt/
-│   │   └── system_prompt.md    # AI Agent 核心约束 Prompt
 │   └── schemas/
-│       └── openapi.yaml        # OpenAPI 3.0 标准契约
-├── integration/
-│   ├── dify/tool_config.json   # Dify 工具配置
-│   └── coze/metadata.json      # Coze 插件元数据
-├── test_skill.py               # 自动化测试脚本
-└── README.md
+├── test_skill.py
+├── Dockerfile
+├── LICENSE
+└── requirements.txt
 ```
 
 ---
 
-## 🤝 贡献
+## 业务背景
 
-欢迎提交 Issue 和 Pull Request！
+详见 [docs/PRD_Reference.md](docs/PRD_Reference.md)
 
-建议流程：
-
-1. 先阅读 `docs/PRD_Reference.md` 理解业务规则
-2. 修改 `src/schemas/openapi.yaml` 时同步更新 Prompt 与测试
-3. 新增功能请补充对应测试用例
+> 本仓库为基于 Jiigo × 彩贝壳虚拟代充 PRD 的**开源参考实现**，非官方产品仓库。
 
 ---
 
-## 📄 License
+## 已知限制（Mock 阶段）
 
-MIT License
+- **支付**：`payUrl` 为 Mock 链接，非真实微信/支付宝收银台
+- **存储**：订单数据在内存中，服务重启后丢失
+- **渠道 Adapter**：`adapters/` 下微信/支付宝/美团为接口 stub，需自行接入 SDK
+- **集成配置**：Dify/Coze 的 `base_url` 默认为占位地址，部署后请改为 `http://127.0.0.1:8000` 或你的云部署 URL
 
 ---
 
-**让 AI Agent 真正懂业务、守规则、走得通闭环。**
+## 贡献
 
-如有任何问题，欢迎在 Issues 中讨论。
+详见 [CONTRIBUTING.md](CONTRIBUTING.md)
+
+1. 阅读 PRD 与 OpenAPI
+2. 修改 API 时同步 Prompt、integration 配置与测试
+3. `python test_skill.py` 必须通过
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE)

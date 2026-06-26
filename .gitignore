@@ -5,9 +5,12 @@ __pycache__/
 
 # 日志文件
 *.log
+debug-*.log
 
-# Cursor/VSCode 编辑器配置
-.cursor/
+# 环境变量
+.env
+
+# Cursor/VSCode（保留 .cursor/skills 提交）
 .vscode/
 
 # 操作系统隐藏文件

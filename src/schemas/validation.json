@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CascadeTemplateValidation",
+  "description": "JSON Schema for brand cascade templates (membership / virtual currency)",
+  "type": "object",
+  "required": ["brandId", "inputFieldName", "inputRegex", "skuCascadeList"],
+  "properties": {
+    "brandId": { "type": "string" },
+    "inputFieldName": { "type": "string" },
+    "inputRegex": { "type": "string" },
+    "skuCascadeList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["level1Name", "level2Options"],
+        "properties": {
+          "level1Name": { "type": "string" },
+          "level2Options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["durationOrAmount", "bestPrice"],
+              "properties": {
+                "durationOrAmount": { "type": "string" },
+                "bestPrice": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

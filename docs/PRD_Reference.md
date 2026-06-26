@@ -207,13 +207,53 @@ COMPLETED
 
 ---
 
-## 九、未来演进方向（参考）
+## 九、超时语义（PRD 与实现必须区分）
+
+| 字段 | 含义 | PRD 标准 | DEBUG 加速 |
+|------|------|---------|-----------|
+| `payTimeoutSeconds` | 待支付订单失效倒计时 | 1800 秒（30 分钟） | 30 秒 |
+| `fulfillmentTimeoutSeconds` | 支付成功后卖家履约大闸 | 900 秒（15 分钟） | 15 秒 |
+
+- 支付超时：订单状态 `PENDING_PAY` → `CLOSED`
+- 履约超时：订单状态 `PENDING_MATCH` / `PENDING_ACCEPT` / `RECHARGING` → `REFUNDED`
+
+## 十、卖家侧 API（Jiigo 副业助手）
+
+| 接口 | 说明 | 状态流转 |
+|------|------|---------|
+| `GET /seller/orders/pending` | 获取待接单列表 | - |
+| `POST /seller/orders/{orderId}/accept` | 卖家接单 | `PENDING_MATCH` → `PENDING_ACCEPT` |
+| `POST /seller/orders/{orderId}/start-recharge` | 开始充值 | `PENDING_ACCEPT` → `RECHARGING` |
+| `POST /seller/orders/{orderId}/deliver` | 上传凭证发货 | `RECHARGING` → `DELIVERED` |
+| `POST /orders/{orderId}/confirm-receipt` | 买家确认收货 | `DELIVERED` → `COMPLETED` |
+
+发货后系统自动计算 `autoConfirmTime`（次日 23:59:59）；超时未手动确认则自动 `COMPLETED`。
+
+## 十一、与本开源项目的对应关系（更新）
+
+| PRD 概念 | 本项目实现位置 |
+|----------|---------------|
+| 支付超时 | `schedule_payment_timeout` + `payTimeoutSeconds` |
+| 履约超时 | `schedule_auto_refund` + `fulfillmentTimeoutSeconds` |
+| 价格校验 | `get_best_price` + create 接口 enforce |
+| 卖家侧 | `src/app.py` Seller 路由 + `seller_prompt.md` |
+| 自动收货 | `schedule_auto_confirm` |
+| MCP 通用接入 | `recharge_mcp/server.py` |
+| Cursor Skill | `.cursor/skills/virtual-recharge/SKILL.md` |
+| 渠道 Adapter | `adapters/` 目录 stub |
+
+## 十二、Confluence PRD 同步说明
+
+官方 PRD 位于 Confluence（pageId=215180732）。本文档由业务规范与 OpenAPI 契约整理而成。若 Confluence 原文有更新，请导出后与本文件 diff，重点核对：页面字段、风控规则、品类列表、异常分支。
+
+## 十三、未来演进方向（参考）
 
 - 支持更多品牌和品类（Steam、Netflix、Apple Gift Card 等）
 - 真实卖家侧接单系统打通
 - 引入风控评分与黑名单机制
 - 多语言 Prompt 支持
 - 真实支付网关对接（当前为 Mock）
+- 微信 / 支付宝 / 美团渠道 Adapter 真实 SDK 接入
 
 ---
 
