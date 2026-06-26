@@ -1,0 +1,410 @@
+openapi: 3.0.0
+info:
+  title: 虚拟商品代充值 Agent Skill API
+  description: |
+    供 AI Agent 调用的虚拟商品代充值独立插件接口。
+    包含品牌列表获取、品牌级联模板（SKU 规格）校验、创建代充订单以及订单状态实时查询。
+    该契约严格遵循业务 PRD 中的“级联结构”、“单次限购 1 件”、“红灯泡二次确认”和“15 分钟履约超时”规则设计。
+  version: 1.0.0
+  contact:
+    name: Recharge Agent Skill Team
+servers:
+  - url: https://api.recharge-platform.open/v1
+    description: 生产环境虚拟代充平台 API 网关（Agent 专用）
+paths:
+  /brands:
+    get:
+      summary: 获取可用充值品牌列表
+      description: |
+        返回当前平台所有支持的虚拟充值品牌列表。
+        AI Agent 在用户首次表达充值意图时（例如“我想充腾讯视频”），必须首先调用此接口获取品牌信息，
+        以便后续正确调用 getBrandTemplate 并引导用户完成级联选择。
+        每个品牌包含唯一 brandId、展示名称、品类以及 Logo。
+      operationId: listBrands
+      tags:
+        - Brands
+      responses:
+        '200':
+          description: 成功返回当前在售的品牌列表（数组形式）。
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Brand'
+        '500':
+          description: 服务器内部错误，获取品牌列表失败。
+
+  /brands/{brandId}/template:
+    get:
+      summary: 获取品牌的级联配置模板
+      description: |
+        根据 brandId 动态获取该品牌完整的级联 SKU 配置模板。
+        模板中定义了：
+        - 需要用户输入的充值账号字段名称及格式正则（inputFieldName + inputRegex）
+        - 一级规格（会员类型/币种类型）
+        - 二级规格（时长/面额）及当前全网最优价格（bestPrice）
+        AI Agent 必须在调用 createRechargeOrder 之前，先调用此接口获取模板，
+        严格按照模板中的 level1Name → level2Options 顺序引导用户完成选择，
+        并使用返回的 bestPrice 作为 unitPrice 向用户推荐。
+      operationId: getBrandTemplate
+      tags:
+        - Brands
+      parameters:
+        - name: brandId
+          in: path
+          required: true
+          description: |
+            充值品牌的唯一标识符。
+            必须从 GET /brands 接口返回的 Brand.brandId 字段中获取。
+            示例值：brand_001（对应腾讯视频）。
+            AI Agent 不得使用未在品牌列表中出现的 brandId。
+          schema:
+            type: string
+            example: brand_001
+      responses:
+        '200':
+          description: 成功返回指定品牌的完整级联模板，包含输入校验规则和 SKU 价格树。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CascadeTemplate'
+        '404':
+          description: 指定 brandId 不存在或该品牌已下架。
+        '500':
+          description: 服务器内部错误，获取模板失败。
+
+  /orders/create:
+    post:
+      summary: 创建待支付代充订单
+      description: |
+        提交用户确认后的充值参数，创建一笔“占位符”代充订单（尚未匹配具体卖家）。
+        调用此接口前，AI Agent 必须完成以下强制流程：
+        1. 已通过 getBrandTemplate 获取模板并完成级联选择。
+        2. 已使用模板中的 inputRegex 成功校验 rechargeAccount 格式。
+        3. 已向用户展示高亮“🚨【重要账号安全确认】🚨”二次确认框，并获得用户明确“确认”回复。
+        重要业务约束：
+        - quantity 字段严格限制为 1（单次交易仅支持购买 1 份，防止刷单和充错风险）。
+        - unitPrice 必须使用 getBrandTemplate 返回的 bestPrice。
+        成功响应中会返回 payUrl，Agent 可引导用户跳转收银台完成支付。
+      operationId: createRechargeOrder
+      tags:
+        - Orders
+      requestBody:
+        required: true
+        description: 创建订单所需的完整充值参数。所有字段必须与品牌模板严格匹配。
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '200':
+          description: 订单创建成功，返回订单号、支付跳转链接及支付超时时间。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCreatedResponse'
+        '400':
+          description: 请求参数校验失败（例如账号格式错误、quantity != 1、价格与模板不符等）。
+        '429':
+          description: 请求过于频繁或触发风控限流。
+        '500':
+          description: 订单创建失败，可能是系统内部错误。
+
+  /orders/{orderId}/status:
+    get:
+      summary: 轮询/获取订单实时状态
+      description: |
+        查询指定订单的最新流转状态。
+        AI Agent 在用户支付成功后，应定期调用此接口进行状态轮询（建议间隔 5~10 秒）。
+        当状态变为 DELIVERED 时，必须主动向用户展示 rechargeProofUrl 中的充值凭证截图，
+        并提示用户在次日 23:59:59 前确认收货。
+        状态机说明：
+        PENDING_PAY → PENDING_MATCH → PENDING_ACCEPT → RECHARGING → DELIVERED → COMPLETED
+        超时未接单或未发货将自动流转至 REFUNDED。
+      operationId: getOrderStatus
+      tags:
+        - Orders
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: |
+            订单唯一标识符。
+            必须使用 POST /orders/create 成功响应中返回的 OrderCreatedResponse.orderId。
+            示例：ORD_20260625_9981
+          schema:
+            type: string
+            example: ORD_20260625_9981
+      responses:
+        '200':
+          description: 返回订单当前最新状态及相关履约信息（如凭证、自动确认时间）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusResponse'
+        '404':
+          description: 订单不存在。
+        '500':
+          description: 查询订单状态失败。
+
+components:
+  schemas:
+    Brand:
+      type: object
+      description: 虚拟充值品牌信息。代表一个可代充的商品服务商（如腾讯视频、爱奇艺、抖音等）。
+      required:
+        - brandId
+        - brandName
+        - categoryType
+      properties:
+        brandId:
+          type: string
+          description: |
+            品牌的唯一标识符。
+            AI Agent 必须使用此值作为后续 getBrandTemplate 和 createRechargeOrder 的 brandId 参数。
+            示例：brand_001
+          example: brand_001
+        brandName:
+          type: string
+          description: |
+            品牌的可读展示名称，用于在对话中向用户呈现。
+            示例：腾讯视频、爱奇艺 VIP、抖音币 等。
+          example: 腾讯视频
+        categoryType:
+          type: string
+          enum:
+            - MEMBERSHIP
+            - VIRTUAL_CURRENCY
+          description: |
+            品类类型：
+            - MEMBERSHIP：会员类（如视频/音乐会员）
+            - VIRTUAL_CURRENCY：虚拟币/道具类（如游戏币、抖音币）
+            AI Agent 可根据此字段对不同品类采用略有差异的引导话术。
+          example: MEMBERSHIP
+        logoUrl:
+          type: string
+          description: |
+            品牌 Logo 的可访问 HTTPS 图片地址。
+            用于在 Agent 回复中渲染品牌图标，提升用户体验。
+            若为空，Agent 应回退使用品牌名称纯文本展示。
+          example: https://assets.cdn/logos/tencent_video.png
+
+    CascadeTemplate:
+      type: object
+      description: |
+        某品牌的完整级联 SKU 配置模板。
+        定义了用户必须输入的账号字段、格式校验正则，以及从一级规格到二级规格的价格树。
+        AI Agent 必须严格按照此模板的结构顺序（level1Name → level2Options）引导用户完成选择，
+        不得跳过或自行构造不存在的规格组合。
+      required:
+        - brandId
+        - inputFieldName
+        - inputRegex
+        - skuCascadeList
+      properties:
+        brandId:
+          type: string
+          description: |
+            该模板所属品牌的唯一标识符。
+            必须与请求路径中的 brandId 一致。
+          example: brand_001
+        inputFieldName:
+          type: string
+          description: |
+            充值账号输入框的提示文案。
+            例如：“充值账号(手机号)”、“充值 QQ 号”、“抖音 UID”等。
+            AI Agent 在收集账号时应使用此文案作为输入提示。
+          example: 充值账号(手机号)
+        inputRegex:
+          type: string
+          description: |
+            用于校验用户输入的充值账号格式的正则表达式。
+            AI Agent 在调用 createRechargeOrder 之前，**必须** 先用此正则对 rechargeAccount 进行本地校验。
+            校验失败时立即拒绝并友好提示用户重新输入。
+            示例：^1[3-9]\d{9}$（中国大陆手机号）
+          example: "^1[3-9]\\d{9}$"
+        skuCascadeList:
+          type: array
+          description: |
+            级联规格树。
+            第一层为 level1Name（会员类型/商品类型），
+            第二层为 level2Options（时长或面额）。
+            每条 level2 都包含当前全平台最优价格 bestPrice，Agent 应优先向用户推荐该价格。
+          items:
+            type: object
+            description: 一级规格（会员等级/商品类型）及其可选的二级规格列表。
+            required:
+              - level1Name
+              - level2Options
+            properties:
+              level1Name:
+                type: string
+                description: |
+                  一级规格名称，例如：黄金会员、白金会员、星钻会员、100元面额 等。
+                  AI Agent 应先让用户从这些选项中选择。
+                example: 白金会员
+              level2Options:
+                type: array
+                description: |
+                  该一级规格下可选的二级规格（时长/面额）列表。
+                  每个选项都包含 durationOrAmount 和对应的 bestPrice。
+                items:
+                  type: object
+                  description: 二级规格选项，包含时长/面额及推荐价格。
+                  required:
+                    - durationOrAmount
+                    - bestPrice
+                  properties:
+                    durationOrAmount:
+                      type: string
+                      description: |
+                        二级规格的具体时长或面额。
+                        示例：7天、1个月、3个月、100元、500币 等。
+                      example: 3个月
+                    bestPrice:
+                      type: number
+                      description: |
+                        当前全平台在线卖家的最优匹配价（起步价）。
+                        AI Agent 在向用户推荐价格时必须使用此字段的值作为 unitPrice。
+                        该价格可能随市场实时波动。
+                      example: 39.9
+
+    CreateOrderRequest:
+      type: object
+      description: |
+        创建代充订单的请求体。
+        所有字段必须与 getBrandTemplate 返回的模板完全一致。
+        AI Agent 必须在用户明确回复“确认”后才可调用此接口。
+      required:
+        - brandId
+        - rechargeAccount
+        - skuLevel1
+        - skuLevel2
+        - unitPrice
+      properties:
+        brandId:
+          type: string
+          description: |
+            充值品牌 ID。
+            必须使用 getBrandTemplate 响应中返回的 brandId。
+          example: brand_001
+        rechargeAccount:
+          type: string
+          description: |
+            用户提供的目标充值账号。
+            必须通过对应品牌模板中的 inputRegex 完成格式校验。
+            常见示例：13758483450（手机号）、123456789（QQ号）。
+            充错账号无法退款，AI Agent 必须在此字段上执行严格二次确认。
+          example: "13758483450"
+        skuLevel1:
+          type: string
+          description: |
+            一级规格名称。
+            必须完全等于 CascadeTemplate 中某 level1Name 的值。
+            示例：白金会员
+          example: 白金会员
+        skuLevel2:
+          type: string
+          description: |
+            二级规格名称。
+            必须完全等于所选 level1Name 下某 level2Options 中的 durationOrAmount。
+            示例：3个月
+          example: 3个月
+        unitPrice:
+          type: number
+          description: |
+            单价（元）。
+            必须使用 getBrandTemplate 返回的对应 bestPrice。
+            AI Agent 不得自行修改或使用其他价格。
+          example: 39.9
+        quantity:
+          type: integer
+          description: |
+            购买数量。
+            根据平台合规与防刷机制，**该值必须恒等于 1**。
+            AI Agent 收到用户要求购买多份时，必须拒绝并说明“每次仅支持下单购买 1 份，请分次购买”。
+          default: 1
+          example: 1
+
+    OrderCreatedResponse:
+      type: object
+      description: |
+        订单创建成功后的响应。
+        包含订单号、支付收银台跳转地址以及支付超时时间。
+        AI Agent 收到此响应后，应立即向用户提供 payUrl 并开始监控订单状态。
+      properties:
+        orderId:
+          type: string
+          description: |
+            系统生成的订单唯一标识。
+            后续查询状态（getOrderStatus）和履约跟踪均使用此 ID。
+            格式示例：ORD_20260625_9981
+          example: ORD_20260625_9981
+        payUrl:
+          type: string
+          description: |
+            安全支付收银台的跳转链接。
+            AI Agent 可在对话中以按钮或链接形式提供给用户，引导完成支付。
+            支付成功后订单状态将从 PENDING_PAY 流转。
+          example: https://pay.platform.open/cashier?orderId=ORD_9981
+        timeoutSeconds:
+          type: integer
+          description: |
+            支付超时倒计时（秒）。
+            PRD 标准为 1800 秒（30 分钟）。
+            超时未支付的订单将自动关闭。
+          example: 1800
+
+    OrderStatusResponse:
+      type: object
+      description: |
+        订单实时状态查询响应。
+        包含当前状态、状态文案、充值凭证（发货后）和自动确认收货时间。
+      properties:
+        orderId:
+          type: string
+          description: |
+            订单唯一标识符，与创建订单时返回的 orderId 一致。
+          example: ORD_20260625_9981
+        status:
+          type: string
+          enum:
+            - PENDING_PAY
+            - PENDING_MATCH
+            - PENDING_ACCEPT
+            - RECHARGING
+            - DELIVERED
+            - COMPLETED
+            - REFUNDED
+            - CLOSED
+          description: |
+            订单当前状态码。状态流转顺序：
+            PENDING_PAY（待支付）→ PENDING_MATCH（待匹配卖家）→ PENDING_ACCEPT（待卖家接单）
+            → RECHARGING（充值中）→ DELIVERED（已发货/凭证已上传）→ COMPLETED（已确认收货）
+            卖家超时未接单或未在 15 分钟内发货 → 自动变为 REFUNDED（全额退款）。
+            CLOSED 表示订单因其他原因关闭。
+          example: DELIVERED
+        statusText:
+          type: string
+          description: |
+            与 status 对应的中文状态描述，适合直接展示给用户。
+            示例：卖家已发货、等待支付、已完成 等。
+          example: 卖家已发货
+        rechargeProofUrl:
+          type: string
+          description: |
+            卖家履约成功后上传的充值凭证截图地址（HTTPS）。
+            当 status 变为 DELIVERED 时，AI Agent 必须主动向用户展示此图片链接，
+            并提示“资金仍托管在平台，请确认到账后点击确认收货”。
+            发货前此字段可能为空。
+          example: https://assets.cdn/proofs/proof_9981.jpg
+        autoConfirmTime:
+          type: string
+          description: |
+            自动确认收货的截止时间。
+            格式：YYYY-MM-DD HH:mm:ss
+            PRD 定义为“发货次日 23:59:59”。
+            超过此时间系统将自动确认并将资金结算给卖家。
+            AI Agent 可在接近该时间时提醒用户及时确认。
+          example: "2026-06-26 23:59:59"

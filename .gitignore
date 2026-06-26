@@ -1,0 +1,14 @@
+# Python 运行缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 日志文件
+*.log
+
+# Cursor/VSCode 编辑器配置
+.cursor/
+.vscode/
+
+# 操作系统隐藏文件
+.DS_Store

@@ -1,0 +1,176 @@
+{
+  "schema_version": "v1",
+  "name": "虚拟商品代充值",
+  "description": "虚拟商品代充值 AI Agent Skill 插件。支持品牌列表查询、级联 SKU 模板获取（含账号正则校验与最优价推荐）、创建代充订单（强制单次限购 1 件 + 幂等防重 + 红灯泡二次确认）、订单状态实时轮询与履约监控。特别适配 Coze 消息卡片，可在订单发货后自动渲染充值成功凭证图片。",
+  "version": "1.0.0",
+  "logo_url": "https://assets.cdn/logos/recharge_skill_logo.png",
+  "author": "Recharge Agent Skill Team",
+  "contact": {
+    "email": "agent-skill@example.com"
+  },
+  "api": {
+    "type": "openapi",
+    "base_url": "https://api.recharge-platform.open/v1",
+    "auth": {
+      "type": "none"
+    }
+  },
+  "tools": [
+    {
+      "name": "listBrands",
+      "description": "获取当前平台所有支持的虚拟充值品牌列表。用户表达充值需求时必须首先调用，用于让用户选择具体品牌（如腾讯视频、抖音币）。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "brandId": { "type": "string", "description": "品牌唯一标识" },
+            "brandName": { "type": "string", "description": "品牌展示名称" },
+            "categoryType": { "type": "string", "enum": ["MEMBERSHIP", "VIRTUAL_CURRENCY"] },
+            "logoUrl": { "type": "string", "description": "品牌 Logo 图片地址" }
+          }
+        }
+      }
+    },
+    {
+      "name": "getBrandTemplate",
+      "description": "获取指定品牌的级联配置模板。必须在下单前调用，返回账号输入提示、正则校验规则以及一级/二级 SKU 规格树和当前最优价格（bestPrice）。AI 必须严格按照返回的级联顺序引导用户选择。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string",
+            "description": "品牌 ID，必须来自 listBrands 返回结果。示例：brand_001"
+          }
+        },
+        "required": ["brandId"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "brandId": { "type": "string" },
+          "inputFieldName": { "type": "string", "description": "充值账号输入框提示文案，例如“充值账号(手机号)”或“抖音 UID”" },
+          "inputRegex": { "type": "string", "description": "充值账号格式校验正则表达式，调用 createRechargeOrder 前必须先用此正则校验用户输入" },
+          "skuCascadeList": {
+            "type": "array",
+            "description": "级联规格树",
+            "items": {
+              "type": "object",
+              "properties": {
+                "level1Name": { "type": "string" },
+                "level2Options": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "durationOrAmount": { "type": "string" },
+                      "bestPrice": { "type": "number", "description": "当前全平台最优推荐价格" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "createRechargeOrder",
+      "description": "创建待支付代充订单。调用前必须：1. 已获取模板并完成级联选择 2. 已通过 inputRegex 校验账号 3. 已向用户展示红色二次确认框并获得明确“确认”。quantity 必须为 1，否则会被拒绝。返回支付链接 payUrl。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string",
+            "description": "品牌 ID"
+          },
+          "rechargeAccount": {
+            "type": "string",
+            "description": "用户充值账号（已通过正则校验）"
+          },
+          "skuLevel1": {
+            "type": "string",
+            "description": "一级规格（例如：白金会员）"
+          },
+          "skuLevel2": {
+            "type": "string",
+            "description": "二级规格（例如：3个月）"
+          },
+          "unitPrice": {
+            "type": "number",
+            "description": "单价，必须使用模板返回的 bestPrice"
+          },
+          "quantity": {
+            "type": "integer",
+            "description": "购买数量，平台强制要求必须为 1",
+            "default": 1
+          }
+        },
+        "required": ["brandId", "rechargeAccount", "skuLevel1", "skuLevel2", "unitPrice"]
+      },
+      "headers": {
+        "X-Idempotency-Key": {
+          "type": "string",
+          "description": "幂等性请求头（必填）。相同 Key 重复请求不会重复创建订单和扣款。",
+          "required": true
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "description": "订单 ID，后续查询状态使用此 ID" },
+          "payUrl": { "type": "string", "description": "支付收银台跳转链接" },
+          "timeoutSeconds": { "type": "integer", "description": "支付超时时间（秒）" }
+        }
+      }
+    },
+    {
+      "name": "getOrderStatus",
+      "description": "查询订单最新状态。支付成功后建议每 5~10 秒轮询一次。当 status 变为 DELIVERED 时，插件会返回 rechargeProofUrl（充值凭证图片地址），Coze 可直接使用消息卡片或图片组件渲染该凭证给用户查看。超时未发货将自动变为 REFUNDED。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "orderId": {
+            "type": "string",
+            "description": "订单 ID，由 createRechargeOrder 返回"
+          }
+        },
+        "required": ["orderId"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["PENDING_PAY", "PENDING_MATCH", "PENDING_ACCEPT", "RECHARGING", "DELIVERED", "COMPLETED", "REFUNDED", "CLOSED"],
+            "description": "订单当前状态"
+          },
+          "statusText": { "type": "string", "description": "状态中文描述，适合直接展示" },
+          "rechargeProofUrl": {
+            "type": "string",
+            "description": "卖家发货后上传的充值成功凭证截图 HTTPS 地址。当 status=DELIVERED 时返回有效地址，建议使用 Coze 图片卡片或消息卡片直接渲染展示给用户。"
+          },
+          "autoConfirmTime": {
+            "type": "string",
+            "description": "自动确认收货截止时间（格式 YYYY-MM-DD HH:mm:ss）"
+          }
+        }
+      }
+    }
+  ],
+  "capabilities": {
+    "support_image_card": true,
+    "support_message_card": true
+  },
+  "notes": {
+    "image_rendering": "当 getOrderStatus 返回的 rechargeProofUrl 字段非空且为有效的 .jpg / .png 图片地址时，推荐在 Coze 工作流或 Bot 中使用「图片」或「卡片」组件直接渲染该 URL，实现发货凭证的视觉化展示。",
+    "idempotency": "createRechargeOrder 接口必须在请求头中传入 X-Idempotency-Key，否则会返回错误。",
+    "quantity_limit": "createRechargeOrder 的 quantity 字段必须为 1，平台会强制校验。"
+  }
+}
