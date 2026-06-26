@@ -8,7 +8,6 @@
 
 **仓库地址：** https://github.com/Xxxjane/recharge-agent-skill
 
-**Release：** [v1.0.0](https://github.com/Xxxjane/recharge-agent-skill/releases/tag/v1.0.0) — 首次开源版本。GitHub About/Topics 配置见 [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md)。
 
 ---
 
